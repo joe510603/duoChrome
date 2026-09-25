@@ -22,7 +22,7 @@ from duochrome.fingerprint import stealth_script
 from duochrome.profile import Profile
 
 
-def _find_chromium_executable() -> Optional[str]:
+def _find_chromium_executable(headless: bool = False) -> Optional[str]:
     """Locate the Chromium binary the user already has via `playwright install`.
 
     When PyInstaller bundles the .app, Playwright's internal logic still
@@ -32,21 +32,45 @@ def _find_chromium_executable() -> Optional[str]:
     location, not runtime lookup, so we have to point Playwright at the
     system cache directly via `executable_path`.
 
-    Returns the path to chrome-headless-shell if found, else None.
+    Picks the right binary by intent:
+      - headless=True  → chrome-headless-shell (no GUI, lighter)
+      - headless=False → "Google Chrome for Testing" / Chromium (real window)
+
+    Returns None if neither is found (user needs to run
+    `playwright install chromium`).
     """
     import glob as _glob
 
-    pattern = str(
-        Path.home()
-        / "Library"
-        / "Caches"
-        / "ms-playwright"
-        / "chromium_headless_shell-*"
-        / "chrome-headless-shell-mac-*"
-        / "chrome-headless-shell"
-    )
+    pw = Path.home() / "Library" / "Caches" / "ms-playwright"
+    if headless:
+        pattern = str(
+            pw / "chromium_headless_shell-*"
+            / "chrome-headless-shell-mac-*"
+            / "chrome-headless-shell"
+        )
+    else:
+        # Headed builds ship as a .app bundle; the actual binary lives in
+        # Contents/MacOS/Google Chrome for Testing (or 'Chromium' for
+        # older revisions). Match the more common name first.
+        pattern = str(
+            pw / "chromium-*"
+            / "chrome-mac-*"
+            / "Google Chrome for Testing.app"
+            / "Contents" / "MacOS" / "Google Chrome for Testing"
+        )
     matches = sorted(_glob.glob(pattern))
-    return matches[0] if matches else None
+    if matches:
+        return matches[0]
+    if not headless:
+        # Fallback: headless-shell can still run in --headless=new mode,
+        # but won't show a GUI window — only use as last resort.
+        fallback = sorted(_glob.glob(str(
+            pw / "chromium_headless_shell-*"
+            / "chrome-headless-shell-mac-*"
+            / "chrome-headless-shell"
+        )))
+        return fallback[0] if fallback else None
+    return None
 
 
 def _find_chromium_pid(user_data_dir: str) -> Optional[int]:
@@ -72,14 +96,20 @@ def _find_chromium_pid(user_data_dir: str) -> Optional[int]:
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
 
-    # First pass: find all chrome-headless-shell PIDs
-    shell_pids: set[int] = set()
+    # First pass: find every Chromium-family PID (headed "Google Chrome for
+    # Testing" + "Chromium" + headless "chrome-headless-shell"). They all
+    # have `--user-data-dir` so we can also distinguish per-profile later.
+    chromium_pids: set[int] = set()
     for line in out.splitlines():
-        line = line.strip()
-        if "chrome-headless-shell" not in line:
+        if not any(s in line for s in (
+            "chrome-headless-shell",
+            "Google Chrome for Testing",
+            "Chromium.app/Contents/MacOS/Chromium",
+            "/Chromium --",
+        )):
             continue
         try:
-            shell_pids.add(int(line.split(None, 1)[0]))
+            chromium_pids.add(int(line.split(None, 1)[0]))
         except (ValueError, IndexError):
             continue
 
@@ -107,7 +137,7 @@ def _find_chromium_pid(user_data_dir: str) -> Optional[int]:
                 if c in seen:
                     continue
                 seen.add(c)
-                if c in shell_pids:
+                if c in chromium_pids:
                     return c
                 next_frontier.append(c)
         frontier = next_frontier
@@ -153,7 +183,9 @@ def launch(profile: Profile, *, root: Path, headless: bool = False, url: Optiona
 
     # When bundled by PyInstaller, Playwright can't find Chromium via its
     # default bundle-relative lookup. Point it at the system cache.
-    executable = _find_chromium_executable()
+    # Pick headed vs headless binary by intent — the headed "Chrome for
+    # Testing" bundle is required to actually show a window.
+    executable = _find_chromium_executable(headless=headless)
     if executable:
         launch_kwargs["executable_path"] = executable
 
