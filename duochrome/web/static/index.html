@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>duoChrome</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+    .dot-alive { color: #10b981; }
+    .dot-dead  { color: #9ca3af; }
+    .modal-bg { background: rgba(0,0,0,0.4); }
+    .scroll-h::-webkit-scrollbar { height: 6px; }
+    .scroll-h::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    code { font-family: "SF Mono", Menlo, monospace; font-size: 12px; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+
+<header class="bg-white border-b border-slate-200">
+  <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 grid place-items-center text-white font-bold">d</div>
+      <div>
+        <div class="text-lg font-semibold">duoChrome</div>
+        <div class="text-xs text-slate-500" id="info-line">loading...</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <select id="group-filter" class="text-sm border border-slate-300 rounded px-2 py-1.5 bg-white">
+        <option value="">全部分组</option>
+      </select>
+      <button id="refresh-btn" class="text-sm px-3 py-1.5 rounded border border-slate-300 hover:bg-slate-100">↻ 刷新</button>
+      <button id="create-btn" class="text-sm px-3 py-1.5 rounded bg-indigo-600 text-white hover:bg-indigo-700">+ 新建 profile</button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-6 py-6">
+  <!-- Toolbar -->
+  <div class="mb-4 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <button id="launch-group-btn" class="text-sm px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700">▶ 启动当前分组</button>
+      <button id="stop-all-btn" class="text-sm px-3 py-1.5 rounded border border-rose-300 text-rose-700 hover:bg-rose-50">⏹ 全部停止</button>
+    </div>
+    <div class="text-xs text-slate-500" id="count-line">—</div>
+  </div>
+
+  <!-- Table -->
+  <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-slate-600 text-xs uppercase tracking-wider">
+        <tr>
+          <th class="text-left px-4 py-3 w-8"><input type="checkbox" id="check-all" /></th>
+          <th class="text-left px-4 py-3">名称</th>
+          <th class="text-left px-4 py-3">分组</th>
+          <th class="text-left px-4 py-3">代理</th>
+          <th class="text-left px-4 py-3 w-20">状态</th>
+          <th class="text-left px-4 py-3">最近打开</th>
+          <th class="text-left px-4 py-3">备注</th>
+          <th class="text-right px-4 py-3 w-56">操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody" class="divide-y divide-slate-100"></tbody>
+    </table>
+    <div id="empty-state" class="hidden text-center py-16 text-slate-400 text-sm">
+      还没有 profile —— 点右上角「+ 新建 profile」开始
+    </div>
+  </div>
+</main>
+
+<!-- Create modal -->
+<div id="create-modal" class="hidden fixed inset-0 z-50 modal-bg grid place-items-center">
+  <div class="bg-white rounded-lg shadow-xl w-[480px] max-w-[92vw] p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-lg font-semibold">新建 profile</h3>
+      <button onclick="hideCreate()" class="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button>
+    </div>
+    <form id="create-form" class="space-y-3">
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">名称 *</label>
+        <input name="name" required class="w-full border border-slate-300 rounded px-3 py-2 text-sm" placeholder="龙潭-吴科娟" />
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">分组</label>
+          <input name="group" value="default" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">视口</label>
+          <input name="viewport" value="1280x800" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" placeholder="1280x800" />
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">代理 (可选)</label>
+        <input name="proxy" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" placeholder="socks5://127.0.0.1:1080" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">User-Agent (可选)</label>
+        <input name="ua" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">备注</label>
+        <input name="notes" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" onclick="hideCreate()" class="px-4 py-2 text-sm border border-slate-300 rounded hover:bg-slate-50">取消</button>
+        <button type="submit" class="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700">创建</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Edit modal -->
+<div id="edit-modal" class="hidden fixed inset-0 z-50 modal-bg grid place-items-center">
+  <div class="bg-white rounded-lg shadow-xl w-[480px] max-w-[92vw] p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-lg font-semibold">编辑 profile</h3>
+      <button onclick="hideEdit()" class="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button>
+    </div>
+    <div class="text-xs text-slate-500 mb-3" id="edit-name-line"></div>
+    <form id="edit-form" class="space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">分组</label>
+          <input name="group" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">视口</label>
+          <input name="viewport" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" placeholder="1280x800" />
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">代理</label>
+        <input name="proxy" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" placeholder="socks5://..." />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">User-Agent</label>
+        <input name="ua" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">备注</label>
+        <input name="notes" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" onclick="hideEdit()" class="px-4 py-2 text-sm border border-slate-300 rounded hover:bg-slate-50">取消</button>
+        <button type="submit" class="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="hidden fixed bottom-6 right-6 z-50 bg-slate-900 text-white text-sm px-4 py-2 rounded shadow-lg"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
+let _profiles = [];
+let _selectedGroup = "";
+
+function toast(msg, ok = true) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = `fixed bottom-6 right-6 z-50 text-white text-sm px-4 py-2 rounded shadow-lg ${ok ? "bg-slate-900" : "bg-rose-600"}`;
+  setTimeout(() => t.classList.add("hidden"), 2400);
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+function fmtTime(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getMonth()+1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadInfo() {
+  try {
+    const info = await api("/api/info");
+    $("#info-line").textContent = `${info.root} · v${info.version}`;
+  } catch (e) { /* noop */ }
+}
+
+async function loadProfiles() {
+  try {
+    const url = _selectedGroup ? `/api/profiles?group=${encodeURIComponent(_selectedGroup)}` : "/api/profiles";
+    _profiles = await api(url);
+    render();
+    refreshGroupFilter();
+  } catch (e) { toast(`load failed: ${e.message}`, false); }
+}
+
+function render() {
+  const tbody = $("#tbody");
+  const empty = $("#empty-state");
+  $("#count-line").textContent = `${_profiles.length} 个 profile`;
+  if (_profiles.length === 0) {
+    tbody.innerHTML = "";
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+  tbody.innerHTML = _profiles.map(p => `
+    <tr class="hover:bg-slate-50">
+      <td class="px-4 py-3"><input type="checkbox" class="row-check" data-name="${p.name}" /></td>
+      <td class="px-4 py-3 font-medium">${escapeHtml(p.name)}</td>
+      <td class="px-4 py-3"><span class="px-2 py-0.5 rounded bg-slate-100 text-xs">${escapeHtml(p.group)}</span></td>
+      <td class="px-4 py-3 text-xs text-slate-500 font-mono">${p.proxy ? escapeHtml(p.proxy) : "—"}</td>
+      <td class="px-4 py-3 text-lg">
+        <span class="${p.alive ? "dot-alive" : "dot-dead"}">${p.alive ? "●" : "○"}</span>
+        ${p.alive ? `<span class="text-xs text-slate-400 ml-1">${p.pid || ""}</span>` : ""}
+      </td>
+      <td class="px-4 py-3 text-xs text-slate-500">${fmtTime(p.last_opened_at)}</td>
+      <td class="px-4 py-3 text-xs text-slate-500 max-w-xs truncate">${escapeHtml(p.notes || "")}</td>
+      <td class="px-4 py-3 text-right">
+        <button data-act="launch" data-name="${p.name}" class="text-xs px-2 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700">启动</button>
+        <button data-act="stop" data-name="${p.name}" class="text-xs px-2 py-1 rounded border border-rose-300 text-rose-700 hover:bg-rose-50 ml-1" ${p.alive ? "" : "disabled"}>停止</button>
+        <button data-act="edit" data-name="${p.name}" class="text-xs px-2 py-1 rounded border border-slate-300 text-slate-600 hover:bg-slate-100 ml-1">编辑</button>
+        <button data-act="del" data-name="${p.name}" class="text-xs px-2 py-1 rounded border border-slate-300 text-slate-600 hover:bg-slate-100 ml-1">删除</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function refreshGroupFilter() {
+  const groups = [...new Set(_profiles.map(p => p.group))].sort();
+  const sel = $("#group-filter");
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">全部分组</option>` + groups.map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
+  sel.value = cur || _selectedGroup || "";
+}
+
+function escapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+}
+
+function showCreate() { $("#create-modal").classList.remove("hidden"); }
+function hideCreate() { $("#create-modal").classList.add("hidden"); $("#create-form").reset(); }
+
+let _editing = null;
+function showEdit(profile) {
+  _editing = profile;
+  $("#edit-name-line").textContent = `profile: ${profile.name}`;
+  const form = $("#edit-form");
+  form.group.value = profile.group || "";
+  form.viewport.value = `${profile.viewport[0]}x${profile.viewport[1]}`;
+  form.proxy.value = profile.proxy || "";
+  form.ua.value = profile.ua || "";
+  form.notes.value = profile.notes || "";
+  $("#edit-modal").classList.remove("hidden");
+}
+function hideEdit() { $("#edit-modal").classList.add("hidden"); _editing = null; }
+
+$("#create-btn").onclick = showCreate;
+$("#refresh-btn").onclick = loadProfiles;
+$("#group-filter").onchange = (e) => { _selectedGroup = e.target.value; loadProfiles(); };
+
+$("#create-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const [w, h] = (fd.get("viewport") || "1280x800").toLowerCase().split("x").map(Number);
+  try {
+    await api("/api/profiles", {
+      method: "POST",
+      body: {
+        name: fd.get("name"),
+        group: fd.get("group") || "default",
+        proxy: fd.get("proxy") || null,
+        ua: fd.get("ua") || null,
+        viewport_w: w || 1280,
+        viewport_h: h || 800,
+        notes: fd.get("notes") || "",
+      },
+    });
+    toast(`created '${fd.get("name")}'`);
+    hideCreate();
+    loadProfiles();
+  } catch (err) { toast(err.message, false); }
+};
+
+$("#tbody").onclick = async (e) => {
+  const btn = e.target.closest("button[data-act]");
+  if (!btn) return;
+  const name = btn.dataset.name;
+  const act = btn.dataset.act;
+  try {
+    if (act === "launch") {
+      await api(`/api/profiles/${encodeURIComponent(name)}/launch`, { method: "POST", body: {} });
+      toast(`launching '${name}'`);
+    } else if (act === "stop") {
+      await api(`/api/profiles/${encodeURIComponent(name)}/stop`, { method: "POST" });
+      toast(`stopped '${name}'`);
+    } else if (act === "edit") {
+      const p = _profiles.find(x => x.name === name);
+      if (p) showEdit(p);
+      return;
+    } else if (act === "del") {
+      if (!confirm(`删除 '${name}' 以及所有浏览器数据？`)) return;
+      await api(`/api/profiles/${encodeURIComponent(name)}`, { method: "DELETE" });
+      toast(`removed '${name}'`);
+    }
+    setTimeout(loadProfiles, 500);
+  } catch (err) { toast(err.message, false); }
+};
+
+$("#edit-form").onsubmit = async (e) => {
+  e.preventDefault();
+  if (!_editing) return;
+  const fd = new FormData(e.target);
+  const vp = (fd.get("viewport") || "1280x800").toLowerCase().split("x").map(Number);
+  const body = {};
+  body.group = fd.get("group") || "default";
+  body.proxy = fd.get("proxy") || null;
+  body.ua = fd.get("ua") || null;
+  body.notes = fd.get("notes") || "";
+  body.viewport_w = vp[0] || 1280;
+  body.viewport_h = vp[1] || 800;
+  try {
+    await api(`/api/profiles/${encodeURIComponent(_editing.name)}`, {
+      method: "PATCH", body,
+    });
+    toast(`updated '${_editing.name}'`);
+    hideEdit();
+    loadProfiles();
+  } catch (err) { toast(err.message, false); }
+};
+
+$("#launch-group-btn").onclick = async () => {
+  const g = _selectedGroup || prompt("启动哪个 group？");
+  if (!g) return;
+  try {
+    await api("/api/profiles/launch-group", { method: "POST", body: { group: g } });
+    toast(`launching group '${g}'`);
+    setTimeout(loadProfiles, 800);
+  } catch (err) { toast(err.message, false); }
+};
+
+$("#stop-all-btn").onclick = async () => {
+  if (!confirm("停止所有运行中的 Chrome？")) return;
+  try {
+    const r = await api("/api/profiles/stop-all", { method: "POST" });
+    toast(`stopped ${r.killed}`);
+    setTimeout(loadProfiles, 500);
+  } catch (err) { toast(err.message, false); }
+};
+
+// Poll every 3s for live status updates
+setInterval(loadProfiles, 3000);
+loadInfo();
+loadProfiles();
+</script>
+</body>
+</html>

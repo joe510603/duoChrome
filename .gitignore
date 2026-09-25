@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+UNKNOWN.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Virtualenv
+.venv/
+venv/
+
+# duoChrome runtime — never commit per-profile data
+profiles/
+*.pid
+
+# Leftover artifacts from pip / setup.py develop installs
+src/
+UNKNOWN.egg-info/
+duochrome.egg-info/
+
+# OS
+.DS_Store
