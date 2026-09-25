@@ -161,6 +161,7 @@ class DuoChrome:
             ProfileAlreadyRunning: pidfile exists and process is alive (unless force=True)
         """
         import os as _os
+        from pathlib import Path as _Path
         import subprocess
         import sys as _sys
 
@@ -171,7 +172,11 @@ class DuoChrome:
                 f"profile '{name}' is already running (PID {self.store.read_pid(name)})"
             )
 
-        args = [_sys.executable, "-m", "duochrome.cli", "launch", name]
+        # IMPORTANT: when packaged by PyInstaller, _sys.executable is the
+        # binary itself (e.g. /Applications/duochrome.app/Contents/MacOS/duochrome)
+        # which doesn't understand `-m`. We always invoke our own binary with
+        # the subcommand directly — works in both dev and packaged modes.
+        args = [_sys.executable, "launch", name]
         if headless:
             args.append("--headless")
         if url:
@@ -180,6 +185,15 @@ class DuoChrome:
             args.append("--force")
 
         env = {**_os.environ, "DUOCHROME_ROOT": str(self.root)}
+
+        # PyInstaller bundles Playwright's Python source but NOT the Chromium
+        # binary (the binary lives in ~/Library/Caches/ms-playwright/ and must
+        # be installed separately via `playwright install chromium`). Without
+        # this env var, the packaged .app looks for Chromium inside its own
+        # bundle path and crashes.
+        pw_cache = _Path.home() / "Library" / "Caches" / "ms-playwright"
+        if pw_cache.exists():
+            env["PLAYWRIGHT_BROWSERS_PATH"] = str(pw_cache)
 
         log_dir = self.root / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)

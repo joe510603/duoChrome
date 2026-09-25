@@ -22,6 +22,33 @@ from duochrome.fingerprint import stealth_script
 from duochrome.profile import Profile
 
 
+def _find_chromium_executable() -> Optional[str]:
+    """Locate the Chromium binary the user already has via `playwright install`.
+
+    When PyInstaller bundles the .app, Playwright's internal logic still
+    looks for the browser inside the bundle's Resources/playwright/...
+    path — which doesn't exist (Chromium isn't part of the wheel, it must
+    be installed separately). PLAYWRIGHT_BROWSERS_PATH only affects install
+    location, not runtime lookup, so we have to point Playwright at the
+    system cache directly via `executable_path`.
+
+    Returns the path to chrome-headless-shell if found, else None.
+    """
+    import glob as _glob
+
+    pattern = str(
+        Path.home()
+        / "Library"
+        / "Caches"
+        / "ms-playwright"
+        / "chromium_headless_shell-*"
+        / "chrome-headless-shell-mac-*"
+        / "chrome-headless-shell"
+    )
+    matches = sorted(_glob.glob(pattern))
+    return matches[0] if matches else None
+
+
 def _find_chromium_pid(user_data_dir: str) -> Optional[int]:
     """Best-effort: locate the Chromium process spawned for `user_data_dir`.
 
@@ -97,6 +124,12 @@ def launch(profile: Profile, *, root: Path, headless: bool = False, url: Optiona
     if profile.proxy:
         # Playwright proxy format: {"server": "host:port", "username?": ..., "password?": ...}
         launch_kwargs["proxy"] = _parse_proxy(profile.proxy)
+
+    # When bundled by PyInstaller, Playwright can't find Chromium via its
+    # default bundle-relative lookup. Point it at the system cache.
+    executable = _find_chromium_executable()
+    if executable:
+        launch_kwargs["executable_path"] = executable
 
     pw = sync_playwright().start()
     ctx = pw.chromium.launch_persistent_context(**launch_kwargs)
