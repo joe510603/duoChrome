@@ -4,11 +4,13 @@ Every `launch_persistent_context` call:
   - spawns a fresh OS-level Chromium process (independent from other profiles)
   - binds to a unique user_data_dir on disk (cookies / cache / IndexedDB isolated)
   - applies a small stealth init script (see fingerprint.py)
+  - ensures the bookmarks bar is visible (writes Preferences JSON before launch)
 
 The returned BrowserContext is a live handle — closing it kills the Chromium process.
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 from pathlib import Path
@@ -74,6 +76,11 @@ def launch(profile: Profile, *, root: Path, headless: bool = False, url: Optiona
     user_data_dir = profile.chrome_dir(root)
     user_data_dir.mkdir(parents=True, exist_ok=True)
 
+    # Always show the bookmarks bar — write Preferences BEFORE Chrome starts.
+    # Chrome reads this file on launch; we respect existing user choices (if they
+    # explicitly disabled the bar, leave it alone).
+    _ensure_bookmark_bar(user_data_dir)
+
     launch_kwargs: dict = dict(
         headless=headless,
         user_data_dir=str(user_data_dir),
@@ -136,3 +143,38 @@ def _parse_proxy(url: str) -> dict:
     if p.scheme.startswith("socks"):
         out["server"] = f"{p.scheme}://{server}"
     return out
+
+
+def _ensure_bookmark_bar(user_data_dir: Path) -> None:
+    """Force Chrome to show the bookmarks bar on launch.
+
+    Writes `<user_data_dir>/Default/Preferences` (merged with any existing
+    JSON the user has there) so that:
+      bookmark_bar.show_on_all_tabs = true
+
+    Behavior:
+    - First launch of a fresh profile: key gets set to true (default).
+    - User later disabled the bar in Chrome UI: we leave it disabled
+      (show_on_all_tabs is explicitly false → respect that choice).
+    - If the file is missing or corrupt: we start from an empty dict.
+    """
+    prefs_path = user_data_dir / "Default" / "Preferences"
+    prefs_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if prefs_path.exists():
+            prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
+        else:
+            prefs = {}
+    except (json.JSONDecodeError, OSError):
+        prefs = {}
+
+    bookmark_bar = prefs.setdefault("bookmark_bar", {})
+    # Only set true if user hasn't explicitly disabled it
+    if bookmark_bar.get("show_on_all_tabs") is not False:
+        bookmark_bar["show_on_all_tabs"] = True
+
+    prefs_path.write_text(
+        json.dumps(prefs, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
