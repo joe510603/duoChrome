@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from ..core import DuoChrome, ProfileAlreadyRunning
+from duochrome.core import DuoChrome, ProfileAlreadyRunning
 
 app = FastAPI(title="duoChrome", version="0.1.0")
 

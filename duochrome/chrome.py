@@ -18,8 +18,8 @@ from typing import Optional
 
 from playwright.sync_api import BrowserContext, sync_playwright
 
-from .fingerprint import stealth_script
-from .profile import Profile
+from duochrome.fingerprint import stealth_script
+from duochrome.profile import Profile
 
 
 def _find_chromium_pid(user_data_dir: str) -> Optional[int]:

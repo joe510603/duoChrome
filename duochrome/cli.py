@@ -7,8 +7,8 @@ from typing import Optional
 
 import typer
 
-from . import __version__
-from .core import DuoChrome, ProfileAlreadyRunning
+from duochrome import __version__
+from duochrome.core import DuoChrome, ProfileAlreadyRunning
 
 app = typer.Typer(
     name="duochrome",

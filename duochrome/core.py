@@ -30,8 +30,8 @@ from typing import Iterable, Optional
 
 from playwright.sync_api import BrowserContext
 
-from . import chrome as chrome_mod
-from .profile import Profile, ProfileStore
+from duochrome import chrome as chrome_mod
+from duochrome.profile import Profile, ProfileStore
 
 
 _DEFAULT_ROOT = Path.home() / ".duochrome"

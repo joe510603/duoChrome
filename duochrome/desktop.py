@@ -17,7 +17,7 @@ from typing import Optional
 
 import uvicorn
 
-from .core import DuoChrome
+from duochrome.core import DuoChrome
 
 
 def _find_free_port() -> int:
