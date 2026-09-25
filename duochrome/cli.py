@@ -316,4 +316,12 @@ def desktop(
 
 
 if __name__ == "__main__":
+    import sys
+    # When macOS LaunchServices launches the .app (double-click or
+    # `open <app>`), sys.argv is just [binary_path] with no subcommand.
+    # Without a default, our `--help` typer setting would print help and
+    # exit — user sees nothing happen. Default to `desktop` so the GUI
+    # window opens automatically.
+    if len(sys.argv) == 1:
+        sys.argv.append("desktop")
     app()
