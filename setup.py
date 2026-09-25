@@ -17,6 +17,7 @@ setup(
         "typer>=0.9",
         "fastapi>=0.100",
         "uvicorn>=0.20",
+        "pywebview>=5.0",
     ],
     entry_points={
         "console_scripts": [

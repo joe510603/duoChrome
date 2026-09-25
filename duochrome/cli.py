@@ -288,5 +288,32 @@ def ui(
         typer.echo("\n✓ stopped")
 
 
+# ---------- desktop ----------
+
+@app.command()
+def desktop(
+    ctx: typer.Context,
+    width: int = typer.Option(1100, "--width", help="Window width"),
+    height: int = typer.Option(720, "--height", help="Window height"),
+):
+    """Open the duoChrome desktop GUI (native window via pywebview).
+
+    Wraps the same Web UI in a native WKWebView (macOS) / WebView2 (Windows) /
+    GTK WebKit (Linux) window. Closes the window to quit.
+    """
+    try:
+        import webview  # noqa: F401
+    except ImportError:
+        typer.echo("✗ pywebview not installed", err=True)
+        typer.echo("  pip install pywebview", err=True)
+        raise typer.Exit(1)
+
+    dc = _get_dc(ctx)
+    dc.init()
+
+    from duochrome.desktop import launch_desktop
+    launch_desktop(width=width, height=height)
+
+
 if __name__ == "__main__":
     app()
