@@ -52,40 +52,66 @@ def _find_chromium_executable() -> Optional[str]:
 def _find_chromium_pid(user_data_dir: str) -> Optional[int]:
     """Best-effort: locate the Chromium process spawned for `user_data_dir`.
 
-    Playwright's Python API doesn't expose process PID directly across all
-    versions, so we shell out to `ps` and filter by the full user-data-dir path.
-    Returns the PID of the first matching chromium-like process, or None.
+    Implementation: look for chrome-headless-shell whose parent process is
+    the Playwright Node driver — that's the one this wrapper just started.
 
-    Note: we match the FULL user-data-dir path so that other Chromium-based
-    apps (Chrome/Edge/Adobe CEF/WPS) running on the host don't pollute the
-    result. The full path is unique per duoChrome profile.
+    Earlier versions matched on `user_data_dir in command line`, which broke
+    when profile names contain non-ASCII characters: `ps` decodes UTF-8 bytes
+    as latin-1 (`M-hM-/M-hM-/M^U` for "试试1"), so the literal Python string
+    never matches. Matching by PPID is encoding-agnostic and uniquely ties
+    the chromium process back to our wrapper.
     """
+    import os
+
     try:
+        # `pgrep -P <ppid>` returns all child PIDs of <ppid>. Our wrapper
+        # spawned the Playwright Node driver; chromium is a grandchild.
         out = subprocess.check_output(
-            ["ps", "-axo", "pid=,command="], text=True, stderr=subprocess.DEVNULL
+            ["ps", "-axo", "pid=,ppid=,command="], text=True, stderr=subprocess.DEVNULL
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
-    # Prefer chrome-headless-shell (Playwright default for headless). If absent,
-    # fall back to any chromium / Google Chrome binary.
-    candidates: list[tuple[int, str]] = []
+
+    # First pass: find all chrome-headless-shell PIDs
+    shell_pids: set[int] = set()
     for line in out.splitlines():
         line = line.strip()
-        if not line or user_data_dir not in line:
-            continue
-        if not any(b in line for b in ("chrome-headless-shell", "Google Chrome", "/chromium", "chrome ")):
+        if "chrome-headless-shell" not in line:
             continue
         try:
-            pid = int(line.split(None, 1)[0])
+            shell_pids.add(int(line.split(None, 1)[0]))
         except (ValueError, IndexError):
             continue
-        # Skip the launcher subprocess itself (Playwright wrapper). The launcher
-        # is short-lived; the actual Chromium process lives much longer.
-        if "chrome-headless-shell" in line:
-            candidates.insert(0, (pid, line))  # headless shell = the real browser
-        else:
-            candidates.append((pid, line))
-    return candidates[0][0] if candidates else None
+
+    # Second pass: find the Playwright Node driver PPID chain that leads
+    # from our wrapper down to one of those shell PIDs.
+    # Build PPID → PID map, then walk from our pid downward.
+    children: dict[int, list[int]] = {}
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            pid = int(parts[0]); ppid = int(parts[1])
+        except ValueError:
+            continue
+        children.setdefault(ppid, []).append(pid)
+
+    # BFS from this process down, stop at the first chrome-headless-shell
+    frontier = [os.getpid()]
+    seen: set[int] = set()
+    while frontier:
+        next_frontier = []
+        for p in frontier:
+            for c in children.get(p, []):
+                if c in seen:
+                    continue
+                seen.add(c)
+                if c in shell_pids:
+                    return c
+                next_frontier.append(c)
+        frontier = next_frontier
+    return None
 
 
 def launch(profile: Profile, *, root: Path, headless: bool = False, url: Optional[str] = None) -> BrowserContext:
