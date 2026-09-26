@@ -5,6 +5,15 @@
 > Open N independent Chromium windows, each with its own cookies / cache / storage.
 > Same site, different accounts, simultaneously.
 
+## 📦 下载安装 (macOS)
+
+1. 去 [**Releases 页面**](https://github.com/joe510603/duoChrome/releases) 下载最新的 `duoChrome-X.Y.Z.dmg`（约 60MB）
+2. 双击 dmg → 把 `duochrome.app` 拖到 `/Applications`
+3. 首次启动会弹"无法打开，因为来自身份不明的开发者" → **右键 → 打开** 一次即可（dmg 未签名，Apple 强制警告）
+4. 第一次跑会提示装 Chromium（~200MB），按提示在终端跑 `python3 -m playwright install chromium`，或者你已经在用 Playwright 就自动用 `~/Library/Caches/ms-playwright/` 里的
+
+> CI 自动构建：每次 push `v*` tag 都会跑 GitHub Actions 出 .dmg，附在 release。手动触发：去 [Actions](../../actions/workflows/build-macos.yml) 点 "Run workflow"。
+
 ## 为什么需要这个
 
 你打开抖音创作者中心，要同时登录 3 个蓝 V 账号——同一个 Chrome 多 tab 是不行的（cookies 互相覆盖）。

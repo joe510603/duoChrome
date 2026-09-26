@@ -1,0 +1,86 @@
+# Build duoChrome macOS .dmg via GitHub Actions.
+#
+# Triggers:
+#   - push of a tag like v0.1.0  → build + attach .dmg to a GitHub Release
+#   - manual "Run workflow"       → build + upload .dmg as a workflow artifact
+#                                   (download from the Actions run page)
+#
+# Why macos-latest: we need pyinstaller + a real macOS SDK + codesign
+# tooling. Linux runners can package Windows/Linux .app bundles but not
+# macOS .app/.dmg. macos-latest is currently arm64 (Apple Silicon), which
+# matches our user's M2.
+
+name: build-macos
+
+on:
+  push:
+    tags:
+      - "v*"          # e.g. v0.1.0
+  workflow_dispatch:    # manual button in Actions tab
+
+permissions:
+  contents: write       # needed to create a Release on tag push
+
+jobs:
+  build:
+    name: build .dmg on macOS
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/setup.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install duoChrome (editable) + build deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pyinstaller
+
+      - name: Verify Chromium is present
+        # The .app bundle itself doesn't ship the Chromium binary; on first
+        # launch the user runs `playwright install chromium` (~200MB download).
+        # We don't bundle it into the .dmg — keeping the installer small.
+        run: |
+          python -c "from playwright.sync_api import sync_playwright; print('playwright OK')"
+
+      - name: Build .app + .dmg
+        run: bash packaging/macos/build.sh
+
+      - name: Verify .dmg
+        run: |
+          test -f dist/duochrome.dmg
+          hdiutil verify dist/duochrome.dmg
+          echo "✓ .dmg verified: $(du -h dist/duochrome.dmg)"
+
+      - name: Upload .dmg (always — for manual downloads)
+        uses: actions/upload-artifact@v4
+        with:
+          name: duoChrome-${{ github.ref_name || github.run_number }}-macos
+          path: dist/duochrome.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+      # Only on tag pushes: also create (or update) a GitHub Release with
+      # the .dmg attached, so users can download from the Releases page.
+      - name: Create Release with .dmg
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/duochrome.dmg
+          generate_release_notes: true
+          draft: false
+          fail_on_unmatched_files: true
