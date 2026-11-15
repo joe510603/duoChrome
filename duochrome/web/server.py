@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from duochrome.core import DuoChrome, ProfileAlreadyRunning
+from duochrome.core import DuoChrome, LaunchFailedError, ProfileAlreadyRunning
 
 app = FastAPI(title="duoChrome", version="0.1.0")
 
@@ -159,6 +159,10 @@ async def launch_profile(name: str, opts: LaunchOptions):
         raise HTTPException(404, str(e))
     except ProfileAlreadyRunning as e:
         raise HTTPException(409, str(e))
+    except LaunchFailedError as e:
+        # The wrapper died right after spawning — no window came up. Tell the
+        # user what actually went wrong instead of a generic failure.
+        raise HTTPException(503, str(e))
     return {"ok": True, "wrapper_pid": wrapper_pid}
 
 
@@ -177,7 +181,54 @@ async def launch_group(body: GroupLaunch):
     pids = dc.launch_group(
         body.group, headless=body.headless, url=body.url, force=body.force
     )
-    return {"ok": True, "wrapper_pids": pids}
+    out = {"ok": True, "wrapper_pids": pids}
+    if getattr(dc, "last_launch_errors", None):
+        out["errors"] = dc.last_launch_errors
+        out["ok"] = False
+    return out
+
+
+# ---------- doctor (browser runtime check & repair) ----------
+
+_install_state: dict = {"running": False, "ok": None, "message": "", "started_at": None}
+
+
+@app.get("/api/doctor")
+async def doctor_status():
+    """Report the state of the Chromium runtime and the last repair attempt."""
+    from duochrome import doctor as doctor_mod
+
+    rep = doctor_mod.diagnose()
+    rep["install"] = dict(_install_state)
+    return rep
+
+
+@app.post("/api/doctor/install")
+async def doctor_install():
+    """Download the Chromium build matching the bundled Playwright driver.
+
+    Runs in the background (170MB+ download) — poll /api/doctor for progress.
+    """
+    import threading
+
+    if _install_state["running"]:
+        return {"ok": True, "started": False, "message": "安装已在进行中，请稍候…"}
+
+    _install_state.update(
+        {"running": True, "ok": None, "message": "正在下载 Chromium（约 170MB，请保持网络畅通）…"}
+    )
+
+    def _worker():
+        from duochrome import doctor as doctor_mod
+
+        try:
+            ok, msg = doctor_mod.install_browser()
+        except Exception as e:  # never let the thread die silently
+            ok, msg = False, f"安装过程出错：{e}"
+        _install_state.update({"running": False, "ok": ok, "message": msg})
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"ok": True, "started": True, "message": _install_state["message"]}
 
 
 @app.post("/api/profiles/stop-all")

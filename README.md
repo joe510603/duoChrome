@@ -133,6 +133,28 @@ python examples/basic.py
 
 自定义 root：`duochrome --root /path/to/root ls`
 
+## 常见问题：点了「启动」但没有窗口
+
+duoChrome 依赖 Chromium 内核，它装在 **系统缓存目录** `~/Library/Caches/ms-playwright/`。
+这个目录会被 macOS 存储管理、CleanMyMac、腾讯柠檬之类的工具当缓存清掉 —— 清完之后
+app 就起不来（报错 `Executable doesn't exist at .../playwright/driver/...`）。
+
+**三条路任选其一：**
+
+1. **在 app 里点一下就好**：桌面窗口 / Web UI 右上角有 `🛠 环境修复` 按钮，
+   点开能看到缺什么，点「一键修复」自动下载装回（约 170MB）。
+   启动失败时这个按钮也会自动弹出来。
+2. **命令行**：
+   ```bash
+   duochrome doctor            # 只体检，告诉你缺什么
+   duochrome doctor --install  # 直接下载装好
+   ```
+3. **手动**：`python3 -m playwright install chromium`
+
+duoChrome 还有一层兜底：找不到专用内核时会自动改用你系统里已装的 Google Chrome，
+所以多数情况下即使没装内核也能开窗口（只是可能存在协议版本兼容问题，
+装回专用内核更稳）。
+
 ## Roadmap
 
 - [ ] **cookie 导入**：从小V猫 partition / 本机 Chrome 复制 cookies

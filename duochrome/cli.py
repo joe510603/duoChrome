@@ -244,6 +244,53 @@ def version():
     typer.echo(f"duochrome {__version__}")
 
 
+# ---------- doctor ----------
+
+@app.command()
+def doctor(
+    install: bool = typer.Option(False, "--install", help="自动下载缺失的 Chromium"),
+):
+    """Check the browser runtime and repair it if needed.
+
+    duoChrome 依赖 Chromium 内核，它装在 ~/Library/Caches/ms-playwright/。
+    这个目录会被系统/清理工具当成缓存删掉，删掉后 app 就起不来。
+    """
+    from duochrome import doctor as doctor_mod
+
+    rep = doctor_mod.diagnose()
+
+    typer.echo("── duoChrome 环境体检 ──")
+    typer.echo(f"运行模式      : {'打包 app (.app)' if rep['frozen'] else '源码 / pip 安装'}")
+    typer.echo(f"Playwright 缓存: {rep['playwright_cache_dir']}")
+    typer.echo(f"  目录存在    : {'✓' if rep['playwright_cache_exists'] else '✗ 已被清理'}")
+    typer.echo(f"  有头内核    : {rep['headed_browser'] or '✗ 未安装'}")
+    typer.echo(f"  无头内核    : {rep['headless_browser'] or '✗ 未安装'}")
+    typer.echo(f"  系统 Chrome : {rep['system_chrome'] or '✗ 未找到'}")
+    typer.echo(f"实际会用      : {rep['effective_browser'] or '✗ 无可用内核'}")
+
+    if rep["ok"] and rep["headed_browser"]:
+        typer.echo("\n✓ 环境正常，可以直接启动。")
+        return
+
+    if rep["issues"] == ["playwright-cache-missing-system-chrome-fallback"]:
+        typer.echo(
+            "\n⚠ Playwright 缓存被清理了（多半是清理工具删了 ~/Library/Caches）。\n"
+            "  当前会兜底用系统 Chrome 启动，通常可用；但某些新版本 Chrome 与\n"
+            "  Playwright 的协议版本可能不匹配。建议执行 doctor --install 装回专用内核。"
+        )
+
+    if not install:
+        typer.echo("\n修复方式：duochrome doctor --install")
+        return
+
+    typer.echo("\n正在下载匹配的 Chromium（约 170MB，请稍候）…")
+    ok, msg = doctor_mod.install_browser()
+    typer.echo(msg)
+    if not ok:
+        raise typer.Exit(1)
+    typer.echo("\n✓ 修复完成，现在可以正常启动了。")
+
+
 # ---------- ui ----------
 
 @app.command()

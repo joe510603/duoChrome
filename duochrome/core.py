@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import os as _os  # alias used by launch_group's subprocess env (kept separate to avoid shadowing `os`)
+import time
 
 from pathlib import Path
 from typing import Iterable, Optional
@@ -41,6 +42,16 @@ class ProfileAlreadyRunning(Exception):
     """Raised when launch() is called on a profile whose .pid is still alive."""
 
 
+class LaunchFailedError(RuntimeError):
+    """The detached wrapper died right after spawning — no Chrome window came up.
+
+    The wrapper stays alive holding the Chromium window, so if it exits within
+    a second or two the browser never started (missing Chromium binary, broken
+    profile dir, bad permissions…). The Web UI used to report "started" in that
+    case and the user just saw nothing happen.
+    """
+
+
 class DuoChrome:
     def __init__(self, root: Optional[Path] = None):
         # Precedence: explicit arg > $DUOCHROME_ROOT env > ~/.duochrome
@@ -50,6 +61,8 @@ class DuoChrome:
                 root = Path(env_root)
         self.root = Path(root).expanduser().resolve() if root else _DEFAULT_ROOT
         self.store = ProfileStore(self.root)
+        # Errors from the most recent launch_group() call (per-profile).
+        self.last_launch_errors: list[str] = []
 
     # ---------- lifecycle ----------
 
@@ -134,11 +147,16 @@ class DuoChrome:
         when the wrapper exits.
         """
         pids: list[int] = []
+        self.last_launch_errors: list[str] = []
         for p in self.list(group=group):
             try:
                 pids.append(self._launch_subprocess(p.name, headless=headless, url=url, force=force))
             except ProfileAlreadyRunning as e:
                 print(f"[skip] {e}")
+            except LaunchFailedError as e:
+                # One profile failing (e.g. missing browser) shouldn't abort the
+                # whole group — collect and report.
+                self.last_launch_errors.append(f"{p.name}: {e}")
         return pids
 
     def _launch_subprocess(
@@ -198,6 +216,8 @@ class DuoChrome:
         log_dir = self.root / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"{name}.log"
+        # Remember where the log ends so we can show only THIS run's output.
+        log_offset = log_path.stat().st_size if log_path.exists() else 0
         log_fp = open(log_path, "ab", buffering=0)
 
         proc = subprocess.Popen(
@@ -209,7 +229,34 @@ class DuoChrome:
             start_new_session=True,
             close_fds=True,
         )
+
+        # Health check: the wrapper process stays alive holding the Chromium
+        # window. If it dies within a couple of seconds, the browser never came
+        # up — surface the real reason (from the log) instead of a silent
+        # "started" that shows no window.
+        deadline = time.time() + 2.5
+        while time.time() < deadline:
+            rc = proc.poll()
+            if rc is not None:
+                tail = self._read_log_tail(name, offset=log_offset)
+                raise LaunchFailedError(
+                    tail or f"启动进程立即退出（退出码 {rc}）。详见日志：{log_path}"
+                )
+            time.sleep(0.2)
+
         return proc.pid
+
+    def _read_log_tail(self, name: str, offset: int = 0, lines: int = 12) -> str:
+        """Read the tail of a profile's launch log (optionally from `offset`)."""
+        log_path = self.root / "logs" / f"{name}.log"
+        try:
+            with open(log_path, "rb") as fp:
+                if offset:
+                    fp.seek(offset)
+                data = fp.read().decode("utf-8", errors="replace")
+        except OSError:
+            return ""
+        return "\n".join(data.splitlines()[-lines:]).strip()
 
     def stop(self, name: str) -> bool:
         """Kill the Chromium process whose PID we tracked. Returns True if killed."""

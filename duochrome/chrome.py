@@ -11,8 +11,11 @@ The returned BrowserContext is a live handle — closing it kills the Chromium p
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -22,8 +25,67 @@ from duochrome.fingerprint import stealth_script
 from duochrome.profile import Profile
 
 
+class BrowserNotFoundError(RuntimeError):
+    """No usable Chromium binary could be found (and none could be installed).
+
+    Raised instead of letting Playwright's raw "Executable doesn't exist at ..."
+    traceback leak to the user — that message points at an internal bundle path
+    and gives no actionable next step.
+    """
+
+
+@dataclass
+class BrowserTarget:
+    """A resolved Chromium to launch.
+
+    Either `executable_path` (explicit binary) or `channel` (Playwright-managed
+    lookup such as "chrome" for the system-installed Google Chrome) is set.
+    """
+
+    executable_path: Optional[str] = None
+    channel: Optional[str] = None
+    source: str = ""
+
+
+def _browser_search_roots() -> list[Path]:
+    """Every place a Chromium binary may live, most likely first.
+
+    1. `~/Library/Caches/ms-playwright` — where `playwright install` puts it.
+       ⚠️ This is a *cache* directory: many cleanup tools (CleanMyMac, 腾讯
+       柠檬, 系统存储管理…) wipe `~/Library/Caches` wholesale, which silently
+       breaks every Playwright-based app on the machine. Hence the fallbacks.
+    2. Inside the PyInstaller bundle (if the user installed it there).
+    3. Inside the pip package's own driver dir (venv-local installs).
+    """
+    roots: list[Path] = []
+
+    # Playwright's own override — when set it means "the browsers live HERE and
+    # nowhere else" (same semantics as the driver), so we don't fall back to
+    # the default cache location.
+    env_cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if env_cache:
+        roots.append(Path(env_cache).expanduser())
+    else:
+        roots.append(Path.home() / "Library" / "Caches" / "ms-playwright")
+
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(Path(meipass) / "playwright" / "driver" / "package" / ".local-browsers")
+
+    try:
+        import playwright as _pw_pkg
+
+        roots.append(
+            Path(_pw_pkg.__file__).resolve().parent / "driver" / "package" / ".local-browsers"
+        )
+    except Exception:  # pragma: no cover - playwright is a hard dependency
+        pass
+
+    return roots
+
+
 def _find_chromium_executable(headless: bool = False) -> Optional[str]:
-    """Locate the Chromium binary the user already has via `playwright install`.
+    """Locate the Chromium binary already installed via `playwright install`.
 
     When PyInstaller bundles the .app, Playwright's internal logic still
     looks for the browser inside the bundle's Resources/playwright/...
@@ -36,41 +98,96 @@ def _find_chromium_executable(headless: bool = False) -> Optional[str]:
       - headless=True  → chrome-headless-shell (no GUI, lighter)
       - headless=False → "Google Chrome for Testing" / Chromium (real window)
 
-    Returns None if neither is found (user needs to run
-    `playwright install chromium`).
+    Returns None if neither is found.
     """
     import glob as _glob
 
-    pw = Path.home() / "Library" / "Caches" / "ms-playwright"
-    if headless:
-        pattern = str(
-            pw / "chromium_headless_shell-*"
-            / "chrome-headless-shell-mac-*"
-            / "chrome-headless-shell"
-        )
-    else:
-        # Headed builds ship as a .app bundle; the actual binary lives in
-        # Contents/MacOS/Google Chrome for Testing (or 'Chromium' for
-        # older revisions). Match the more common name first.
-        pattern = str(
-            pw / "chromium-*"
-            / "chrome-mac-*"
-            / "Google Chrome for Testing.app"
-            / "Contents" / "MacOS" / "Google Chrome for Testing"
-        )
-    matches = sorted(_glob.glob(pattern))
-    if matches:
-        return matches[0]
+    headed_patterns = [
+        # playwright >= 1.49 on macOS arm64: chrome-mac-arm64/Google Chrome for Testing.app
+        "chromium-*/chrome-mac-*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+        # playwright <= 1.48: chrome-mac/Chromium.app
+        "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+        "chromium-*/chrome-mac-*/Chromium.app/Contents/MacOS/Chromium",
+    ]
+    headless_patterns = [
+        "chromium_headless_shell-*/chrome-headless-shell-mac-*/chrome-headless-shell",
+        "chromium_headless_shell-*/chrome-headless-shell-mac/chrome-headless-shell",
+    ]
+
+    patterns = headless_patterns if headless else headed_patterns
+
+    for root in _browser_search_roots():
+        for pattern in patterns:
+            matches = sorted(_glob.glob(str(root / pattern)))
+            if matches:
+                return matches[0]
+
     if not headless:
-        # Fallback: headless-shell can still run in --headless=new mode,
-        # but won't show a GUI window — only use as last resort.
-        fallback = sorted(_glob.glob(str(
-            pw / "chromium_headless_shell-*"
-            / "chrome-headless-shell-mac-*"
-            / "chrome-headless-shell"
-        )))
-        return fallback[0] if fallback else None
+        # Last resort for headed mode: headless-shell can still run with
+        # --headless=new but shows NO GUI window — only use if nothing else
+        # exists, and say so in the source label.
+        for root in _browser_search_roots():
+            for pattern in headless_patterns:
+                matches = sorted(_glob.glob(str(root / pattern)))
+                if matches:
+                    return matches[0]
     return None
+
+
+def _find_system_chrome() -> Optional[str]:
+    """Locate a system-installed Google Chrome / Chromium.
+
+    Used as a last-resort browser when the Playwright cache has been wiped:
+    the user's own Chrome is always present and needs no download.
+    """
+    candidates = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        str(Path.home() / "Applications" / "Google Chrome.app" / "Contents" / "MacOS" / "Google Chrome"),
+    ]
+    for c in candidates:
+        if Path(c).exists():
+            return c
+    return None
+
+
+def resolve_browser(headless: bool = False) -> Optional[BrowserTarget]:
+    """Resolve which Chromium to launch, trying every known source in order.
+
+    Order:
+      1. Playwright cache (bundled "Chrome for Testing" / headless-shell)
+      2. System-installed Google Chrome (`channel="chrome"`)
+
+    Returns None when nothing is available.
+    """
+    exe = _find_chromium_executable(headless=headless)
+    if exe:
+        return BrowserTarget(executable_path=exe, source="playwright cache")
+
+    sys_chrome = _find_system_chrome()
+    if sys_chrome:
+        return BrowserTarget(channel="chrome", source=sys_chrome)
+
+    return None
+
+
+def missing_browser_message() -> str:
+    """Actionable error text shown when no Chromium can be found."""
+    return (
+        "找不到可用的 Chromium 浏览器内核。\n"
+        " duoChrome 需要 Chromium 才能启动窗口，它安装在 "
+        "~/Library/Caches/ms-playwright/ —— 这是系统缓存目录，"
+        "被清理工具删掉就会变成这样。\n"
+        "\n"
+        "修复（任选其一）：\n"
+        "  1) 打开终端执行：duochrome doctor --install\n"
+        "     （会自动下载并装好匹配版本的 Chromium，约 170MB）\n"
+        "  2) 或手动执行：python3 -m playwright install chromium\n"
+        "  3) 如果你不介意用系统已装的 Chrome，也可以直接启动：\n"
+        "     系统 Chrome 会被作为兜底内核自动使用。"
+    )
 
 
 def _find_chromium_pid(user_data_dir: str) -> Optional[int]:
@@ -185,12 +302,25 @@ def launch(profile: Profile, *, root: Path, headless: bool = False, url: Optiona
     # default bundle-relative lookup. Point it at the system cache.
     # Pick headed vs headless binary by intent — the headed "Chrome for
     # Testing" bundle is required to actually show a window.
-    executable = _find_chromium_executable(headless=headless)
-    if executable:
-        launch_kwargs["executable_path"] = executable
+    target = resolve_browser(headless=headless)
+    if target is None:
+        raise BrowserNotFoundError(missing_browser_message())
+    if target.executable_path:
+        launch_kwargs["executable_path"] = target.executable_path
+    elif target.channel:
+        launch_kwargs["channel"] = target.channel
 
     pw = sync_playwright().start()
-    ctx = pw.chromium.launch_persistent_context(**launch_kwargs)
+    try:
+        ctx = pw.chromium.launch_persistent_context(**launch_kwargs)
+    except Exception as e:
+        # Playwright's own error is a giant traceback pointing at an internal
+        # bundle path ("Executable doesn't exist at .../playwright/driver/...")
+        # — useless to the user. Translate it into something actionable.
+        msg = str(e)
+        if "doesn't exist" in msg or "Executable doesn't exist" in msg:
+            raise BrowserNotFoundError(missing_browser_message()) from e
+        raise
 
     # Stealth patch — apply to every new page before any user script runs
     ctx.add_init_script(stealth_script())

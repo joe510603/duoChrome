@@ -30,6 +30,7 @@
       <select id="group-filter" class="text-sm border border-slate-300 rounded px-2 py-1.5 bg-white">
         <option value="">全部分组</option>
       </select>
+      <button id="doctor-btn" class="text-sm px-3 py-1.5 rounded border border-amber-300 text-amber-700 hover:bg-amber-50">🛠 环境修复</button>
       <button id="refresh-btn" class="text-sm px-3 py-1.5 rounded border border-slate-300 hover:bg-slate-100">↻ 刷新</button>
       <button id="create-btn" class="text-sm px-3 py-1.5 rounded bg-indigo-600 text-white hover:bg-indigo-700">+ 新建 profile</button>
     </div>
@@ -150,6 +151,25 @@
   </div>
 </div>
 
+<!-- Doctor modal -->
+<div id="doctor-modal" class="hidden fixed inset-0 z-50 modal-bg grid place-items-center">
+  <div class="bg-white rounded-lg shadow-xl w-[560px] max-w-[92vw] p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-lg font-semibold">环境检测与修复</h3>
+      <button onclick="hideDoctor()" class="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button>
+    </div>
+    <p class="text-xs text-slate-500 mb-3">
+      duoChrome 依赖 Chromium 内核，它装在系统缓存目录 <code class="font-mono">~/Library/Caches/ms-playwright</code>，
+      被清理工具删掉后就会「点了启动但没窗口」。这里可以一键检测并重新下载。
+    </p>
+    <div id="doctor-body" class="text-sm space-y-2"></div>
+    <div class="flex justify-end gap-2 pt-4">
+      <button onclick="hideDoctor()" class="px-4 py-2 text-sm border border-slate-300 rounded hover:bg-slate-50">关闭</button>
+      <button id="doctor-fix-btn" onclick="doctorInstall()" class="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700">一键修复</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div id="toast" class="hidden fixed bottom-6 right-6 z-50 bg-slate-900 text-white text-sm px-4 py-2 rounded shadow-lg"></div>
 
@@ -174,7 +194,14 @@ async function api(path, opts = {}) {
   });
   if (!r.ok) {
     const t = await r.text();
-    throw new Error(t || `HTTP ${r.status}`);
+    let msg = t || `HTTP ${r.status}`;
+    try {
+      const j = JSON.parse(t);
+      if (j && j.detail) msg = j.detail;
+    } catch (e) { /* keep raw body */ }
+    const err = new Error(msg);
+    err.status = r.status;
+    throw err;
   }
   return r.json();
 }
@@ -263,6 +290,100 @@ function showEdit(profile) {
 }
 function hideEdit() { $("#edit-modal").classList.add("hidden"); _editing = null; }
 
+// ---------- doctor (browser runtime check & repair) ----------
+
+function hideDoctor() { $("#doctor-modal").classList.add("hidden"); }
+
+function renderDoctor(rep) {
+  const inst = (rep.install || {});
+  const rows = [
+    ["运行模式", rep.frozen ? "打包 app（.app）" : "源码 / pip 安装"],
+    ["有头内核（带窗口）", rep.headed_browser],
+    ["无头内核", rep.headless_browser],
+    ["系统 Chrome（兜底）", rep.system_chrome],
+    ["实际会使用", rep.effective_browser],
+  ];
+  const body = $("#doctor-body");
+  const status = rep.headed_browser
+    ? `<div class="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">✓ 浏览器内核正常，可以直接启动。</div>`
+    : (rep.system_chrome
+        ? `<div class="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700">⚠ Playwright 专用内核缺失（多半被清理工具删了缓存目录）。当前会兜底用系统 Chrome 启动，建议点「一键修复」装回专用内核。</div>`
+        : `<div class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">✗ 找不到任何可用浏览器内核，现在启动不了。点「一键修复」自动下载（约 170MB）。</div>`);
+
+  const list = rows.map(([k, v]) => `
+    <div class="flex items-start gap-3 border-b border-slate-100 pb-2">
+      <div class="w-32 shrink-0 text-slate-500 text-xs pt-0.5">${k}</div>
+      <div class="flex-1 text-xs font-mono break-all ${v ? "text-slate-700" : "text-rose-500"}">${v ? escapeHtml(v) : "✗ 未找到"}</div>
+    </div>`).join("");
+
+  let extra = "";
+  if (inst.running) {
+    extra = `<div class="rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-indigo-700 text-xs">⏳ ${escapeHtml(inst.message || "安装中…")}</div>`;
+  } else if (inst.ok === true) {
+    extra = `<div class="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700 text-xs whitespace-pre-wrap">✓ ${escapeHtml(inst.message || "修复完成")}</div>`;
+  } else if (inst.ok === false) {
+    extra = `<div class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700 text-xs whitespace-pre-wrap">✗ ${escapeHtml(inst.message || "修复失败")}</div>`;
+  }
+
+  body.innerHTML = status + extra + `<div class="pt-1">${list}</div>`;
+
+  const btn = $("#doctor-fix-btn");
+  btn.disabled = !!inst.running;
+  btn.textContent = inst.running ? "下载中…" : (rep.headed_browser ? "重新下载内核" : "一键修复");
+}
+
+async function refreshDoctor() {
+  const body = $("#doctor-body");
+  body.innerHTML = `<div class="text-slate-400 text-xs">检测中…</div>`;
+  try {
+    const rep = await api("/api/doctor");
+    renderDoctor(rep);
+    return rep;
+  } catch (e) {
+    body.innerHTML = `<div class="text-rose-600 text-xs">检测失败：${escapeHtml(e.message)}</div>`;
+    return null;
+  }
+}
+
+async function showDoctor() {
+  $("#doctor-modal").classList.remove("hidden");
+  await refreshDoctor();
+}
+
+async function doctorInstall() {
+  const btn = $("#doctor-fix-btn");
+  btn.disabled = true;
+  btn.textContent = "下载中…";
+  try {
+    const r = await api("/api/doctor/install", { method: "POST" });
+    toast(r.message || "开始下载 Chromium…");
+    pollDoctor();
+  } catch (e) {
+    toast(e.message, false);
+    btn.disabled = false;
+    btn.textContent = "一键修复";
+  }
+}
+
+function pollDoctor() {
+  const iv = setInterval(async () => {
+    let rep = null;
+    try { rep = await api("/api/doctor"); } catch (e) { /* retry */ }
+    if (!rep) return;
+    renderDoctor(rep);
+    if (rep.install && rep.install.running) return;
+    clearInterval(iv);
+    if (rep.install && rep.install.ok) {
+      toast("✓ 修复完成，现在可以正常启动");
+      loadProfiles();
+    } else if (rep.install && rep.install.message) {
+      toast("修复失败，请看弹窗详情", false);
+    }
+  }, 2000);
+}
+
+$("#doctor-btn").onclick = showDoctor;
+
 $("#create-btn").onclick = showCreate;
 $("#refresh-btn").onclick = loadProfiles;
 $("#group-filter").onchange = (e) => { _selectedGroup = e.target.value; loadProfiles(); };
@@ -312,7 +433,12 @@ $("#tbody").onclick = async (e) => {
       toast(`removed '${name}'`);
     }
     setTimeout(loadProfiles, 500);
-  } catch (err) { toast(err.message, false); }
+  } catch (err) {
+    toast(err.message, false);
+    // 503 = the browser never came up (usually a missing Chromium binary).
+    // Open the repair dialog right away so the user has a fix button.
+    if (err.status === 503) showDoctor();
+  }
 };
 
 $("#edit-form").onsubmit = async (e) => {
@@ -341,10 +467,18 @@ $("#launch-group-btn").onclick = async () => {
   const g = _selectedGroup || prompt("启动哪个 group？");
   if (!g) return;
   try {
-    await api("/api/profiles/launch-group", { method: "POST", body: { group: g } });
-    toast(`launching group '${g}'`);
+    const r = await api("/api/profiles/launch-group", { method: "POST", body: { group: g } });
+    if (r.errors && r.errors.length) {
+      toast(`${r.errors.length} 个 profile 启动失败`, false);
+      showDoctor();
+    } else {
+      toast(`launching group '${g}'`);
+    }
     setTimeout(loadProfiles, 800);
-  } catch (err) { toast(err.message, false); }
+  } catch (err) {
+    toast(err.message, false);
+    if (err.status === 503) showDoctor();
+  }
 };
 
 $("#stop-all-btn").onclick = async () => {
