@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from duochrome.core import DuoChrome, LaunchFailedError, ProfileAlreadyRunning
 
-app = FastAPI(title="duoChrome", version="0.1.0")
+app = FastAPI(title="duoChrome", version="0.1.2")
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -249,10 +249,12 @@ async def status(name: str):
 
 @app.get("/api/info")
 async def info():
+    from duochrome import __version__
+
     dc = _dc()
     return {
         "root": str(dc.root),
-        "version": "0.1.0",
+        "version": __version__,
         "playwright_version": _try_version("playwright"),
     }
 

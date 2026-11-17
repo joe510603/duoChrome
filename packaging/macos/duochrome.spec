@@ -95,8 +95,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "duoChrome",
         "CFBundleDisplayName": "duoChrome",
-        "CFBundleShortVersionString": "0.1.0",
-        "CFBundleVersion": "0.1.0",
+        "CFBundleShortVersionString": "0.1.2",
+        "CFBundleVersion": "0.1.2",
         "LSMinimumSystemVersion": "10.15.0",
         "NSHighResolutionCapable": True,
         "LSUIElement": False,  # show in Dock (False = normal app, not menu-bar)

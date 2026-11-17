@@ -7,7 +7,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="duochrome",
-    version="0.1.0",
+    version="0.1.2",
     description="Lightweight multi-profile browser isolation — like AdsPower/BitBrowser for solo devs",
     long_description="Open N independent Chromium instances, each with its own cookies/cache/storage.",
     python_requires=">=3.9",
